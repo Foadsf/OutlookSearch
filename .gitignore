@@ -1,0 +1,21 @@
+# Local test scripts and exports
+check.ps1
+test_export.md
+
+# Exported files
+*.pdf
+*.html
+*.md
+!README.md
+*.eml
+*.msg
+
+# PowerShell
+*.xml
+*.csv
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
