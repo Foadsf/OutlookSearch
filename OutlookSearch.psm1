@@ -77,7 +77,13 @@ function Get-OutlookFolder {
 #endregion
 
 #region Filter Builder
-function Build-JetFilter {
+function Build-DaslFilter {
+    <#
+    .SYNOPSIS
+    Builds an Outlook DASL filter string from a criteria hashtable.
+    Uses DASL syntax exclusively — JET LIKE/property syntax is unreliable
+    across Outlook versions and locale settings.
+    #>
     [CmdletBinding()]
     param(
         [Parameter()]
@@ -91,78 +97,102 @@ function Build-JetFilter {
         return $RawFilter
     }
     
+    # DASL property URNs (all tested and verified against Outlook COM)
+    $propSubject = '"urn:schemas:httpmail:subject"'
+    $propBody = '"urn:schemas:httpmail:textdescription"'
+    $propFrom = '"urn:schemas:httpmail:fromname"'
+    $propFromAddr = '"urn:schemas:httpmail:fromemail"'
+    $propTo = '"urn:schemas:httpmail:displayto"'
+    $propDate = '"urn:schemas:httpmail:datereceived"'
+    $propRead = '"urn:schemas:httpmail:read"'
+    $propImport = '"urn:schemas:httpmail:importance"'
+    $propHasAttach = '"urn:schemas:httpmail:hasattachment"'
+    
     $conditions = @()
     
-    # Sender/From
+    # Sender/From (partial match)
     if ($Criteria.From) {
-        $conditions += "[FromName] = '$($Criteria.From)' OR [SenderEmailAddress] = '$($Criteria.From)'"
+        $escaped = $Criteria.From -replace "'", "''"
+        $conditions += "($propFrom LIKE '%$escaped%' OR $propFromAddr LIKE '%$escaped%')"
     }
     
-    # Recipients (To, CC, BCC)
+    # Recipients/To (partial match)
     if ($Criteria.To) {
-        $conditions += "[To] LIKE '%$($Criteria.To)%'"
+        $escaped = $Criteria.To -replace "'", "''"
+        $conditions += "$propTo LIKE '%$escaped%'"
     }
     
     # Subject
     if ($Criteria.Subject) {
+        $escaped = $Criteria.Subject -replace "'", "''"
         if ($Criteria.SubjectExact) {
-            $conditions += "[Subject] = '$($Criteria.Subject)'"
+            $conditions += "$propSubject = '$escaped'"
         }
         else {
-            $conditions += "[Subject] LIKE '%$($Criteria.Subject)%'"
+            $conditions += "$propSubject LIKE '%$escaped%'"
         }
     }
     
-    # Body
+    # Body (content search)
     if ($Criteria.Body) {
-        $conditions += "[Body] LIKE '%$($Criteria.Body)%'"
+        $escaped = $Criteria.Body -replace "'", "''"
+        $conditions += "$propBody LIKE '%$escaped%'"
     }
     
-    # Date ranges
+    # Date ranges (ISO 8601 format works reliably with DASL)
     if ($Criteria.After) {
-        $dateStr = (Get-Date $Criteria.After -Format "yyyy-MM-dd")
-        $conditions += "[ReceivedTime] >= '$dateStr'"
+        $dateStr = (Get-Date $Criteria.After).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        $conditions += "$propDate >= '$dateStr'"
     }
     if ($Criteria.Before) {
-        $dateStr = (Get-Date $Criteria.Before -Format "yyyy-MM-dd")
-        $conditions += "[ReceivedTime] <= '$dateStr'"
+        $dateStr = (Get-Date $Criteria.Before).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        $conditions += "$propDate <= '$dateStr'"
     }
     
     # Boolean properties
     if ($Criteria.HasAttachments) {
-        $conditions += "[HasAttachment] = True"
+        $conditions += "$propHasAttach = 1"
     }
-    if ($Criteria.IsRead -ne $null) {
+    if ($null -ne $Criteria.IsRead) {
         if ($Criteria.IsRead) {
-            $conditions += "[UnRead] = False"
+            $conditions += "$propRead = 1"
         }
         else {
-            $conditions += "[UnRead] = True"
+            $conditions += "$propRead = 0"
         }
     }
     if ($Criteria.IsFlagged) {
-        $conditions += "[IsMarkedAsTask] = True"
+        # FlagStatus: 0=None, 1=Complete, 2=Flagged
+        $conditions += '"http://schemas.microsoft.com/mapi/proptag/0x10900003" = 2'
     }
     
-    # Importance
+    # Importance (0=Low, 1=Normal, 2=High)
     if ($Criteria.Importance) {
         $impMap = @{ Low = 0; Normal = 1; High = 2 }
-        $conditions += "[Importance] = $($impMap[$Criteria.Importance])"
+        $conditions += "$propImport = $($impMap[$Criteria.Importance])"
     }
     
     # Combine with AND logic (default)
     if ($conditions.Count -eq 0) {
         return ""
     }
-    elseif ($conditions.Count -eq 1) {
-        return $conditions[0]
+    
+    # Wrap everything in @SQL= prefix for DASL
+    $combined = if ($conditions.Count -eq 1) {
+        $conditions[0]
     }
     else {
-        return ($conditions -join " AND ")
+        $conditions -join " AND "
     }
+    
+    return "@SQL=$combined"
 }
 
 function Build-ComplexFilter {
+    <#
+    .SYNOPSIS
+    Combines multiple DASL filter parts with AND/OR/NOT boolean logic.
+    #>
     [CmdletBinding()]
     param(
         [Parameter()]
@@ -175,22 +205,32 @@ function Build-ComplexFilter {
         [array]$NotFilters
     )
     
+    # Strip any existing @SQL= prefix from individual filters
+    $stripPrefix = { param($f) if ($f -match '^@SQL=(.+)$') { $Matches[1] } else { $f } }
+    
     $parts = @()
     
     foreach ($filter in $AndFilters) {
-        $parts += "($filter)"
+        if ($filter) { $parts += "($(& $stripPrefix $filter))" }
     }
     
     if ($OrFilters.Count -gt 0) {
-        $orPart = ($OrFilters -join " OR ")
-        $parts += "($orPart)"
+        $orParts = @()
+        foreach ($filter in $OrFilters) {
+            if ($filter) { $orParts += $(& $stripPrefix $filter) }
+        }
+        if ($orParts.Count -gt 0) {
+            $parts += "($($orParts -join ' OR '))"
+        }
     }
     
     foreach ($filter in $NotFilters) {
-        $parts += "(NOT ($filter))"
+        if ($filter) { $parts += "(NOT ($(& $stripPrefix $filter)))" }
     }
     
-    return ($parts -join " AND ")
+    if ($parts.Count -eq 0) { return "" }
+    
+    return "@SQL=$($parts -join ' AND ')"
 }
 
 #endregion
@@ -402,7 +442,7 @@ function Search-Outlook {
         if ($Before) { $criteria.Before = $Before }
         
         # Build main filter
-        $mainFilter = Build-JetFilter -Criteria $criteria -RawFilter $RawFilter
+        $mainFilter = Build-DaslFilter -Criteria $criteria -RawFilter $RawFilter
         
         # Handle complex boolean logic
         $andFilters = @()
@@ -412,22 +452,22 @@ function Search-Outlook {
         if ($mainFilter) { $andFilters += $mainFilter }
         
         if ($And) {
-            $andFilters += Build-JetFilter -Criteria $And
+            $andFilters += Build-DaslFilter -Criteria $And
         }
         if ($Or) {
-            $orFilters += Build-JetFilter -Criteria $Or
+            $orFilters += Build-DaslFilter -Criteria $Or
         }
         if ($Not) {
-            $notFilters += Build-JetFilter -Criteria $Not
+            $notFilters += Build-DaslFilter -Criteria $Not
         }
         
         $finalFilter = Build-ComplexFilter -AndFilters $andFilters -OrFilters $orFilters -NotFilters $notFilters
         
-        Write-Verbose "Final JET Filter: $finalFilter"
+        Write-Verbose "Final DASL Filter: $finalFilter"
         
         # Execute search
         $items = $targetFolder.Items
-        $items.Sort("[ReceivedTime]", $true)  # Descending
+        $items.Sort("[ReceivedTime]", $true)  # Sort supports only JET properties
         
         if ($finalFilter) {
             $results = $items.Restrict($finalFilter)
