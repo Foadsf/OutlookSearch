@@ -354,8 +354,17 @@ function Search-Outlook {
         [switch]$PDF,
         
         [Parameter(ParameterSetName = 'CLI')]
-        [string]$ExportPath
+        [string]$ExportPath,
+        
+        [Parameter(ValueFromRemainingArguments)]
+        [string[]]$RemainingArgs
     )
+    
+    # Handle GNU-style or generic help arguments smoothly
+    if ($RemainingArgs -match '^(?:--?(?:h|help|\?)|/h|/\?)$') {
+        Get-Help Search-Outlook -Full
+        return
+    }
     
     # TUI Mode
     if ($Interactive) {
