@@ -22,7 +22,8 @@ if ($PSVersionTable.PSVersion -lt [version]"7.4") {
 try {
     $null = New-Object -ComObject Outlook.Application
     Write-Host "✓ Microsoft Outlook detected" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Warning "Microsoft Outlook not detected. Module requires Outlook to be installed."
 }
 
@@ -41,7 +42,7 @@ if (Test-Path $InstallPath) {
 New-Item -ItemType Directory -Path $InstallPath -Force | Out-Null
 
 # Download module files (in production, these would be from GitHub/raw URLs)
-$baseUrl = "https://raw.githubusercontent.com/Foadsf/OutlookSearch/main"
+$baseUrl = "https://raw.githubusercontent.com/Foadsf/OutlookSearch/master"
 
 $files = @(
     "OutlookSearch.psd1",
@@ -53,7 +54,8 @@ foreach ($file in $files) {
     try {
         Invoke-RestMethod -Uri "$baseUrl/$file" -OutFile "$InstallPath\$file"
         Write-Host " ✓" -ForegroundColor Green
-    } catch {
+    }
+    catch {
         Write-Host " ✗ Failed" -ForegroundColor Red
         Write-Error $_
         exit 1
@@ -73,6 +75,7 @@ if ($cmd) {
     Write-Host "  Search-Outlook -From 'boss@company.com' -ThisWeek"
     Write-Host "  Search-Outlook -Interactive"
     Write-Host "  Get-Help Search-Outlook -Full"
-} else {
+}
+else {
     Write-Error "Installation verification failed."
 }

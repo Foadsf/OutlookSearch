@@ -14,7 +14,7 @@ A production-grade PowerShell 7.4+ module that provides both a powerful CLI and 
 
 ```powershell
 # Run this in PowerShell 7.4+ as Administrator or current user
-Invoke-RestMethod -Uri "https://raw.githubusercontent.com/Foadsf/OutlookSearch/main/Install-OutlookSearch.ps1" | Invoke-Expression
+Invoke-RestMethod -Uri "https://raw.githubusercontent.com/Foadsf/OutlookSearch/master/Install-OutlookSearch.ps1" | Invoke-Expression
 ```
 
 ### Manual Installation
