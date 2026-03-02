@@ -74,6 +74,23 @@ function Get-OutlookFolder {
     return $currentFolder
 }
 
+# Define default display properties for our custom email objects
+$typeData = @{
+    TypeName   = 'OutlookSearch.Email'
+    MemberType = 'ScriptProperty'
+    MemberName = 'SizeKB'
+    Value      = { if ($this.Size) { [math]::Round($this.Size / 1KB, 2) } else { 0 } }
+    Force      = $true
+}
+Update-TypeData @typeData -ErrorAction SilentlyContinue
+
+$typeSet = @{
+    TypeName                  = 'OutlookSearch.Email'
+    DefaultDisplayPropertySet = 'ReceivedTime', 'SenderName', 'Subject', 'SizeKB'
+    Force                     = $true
+}
+Update-TypeData @typeSet -ErrorAction SilentlyContinue
+
 #endregion
 
 #region Filter Builder
@@ -503,6 +520,7 @@ function Search-Outlook {
                         Categories      = $(try { $item.Categories } catch { "" })
                         OutlookItem     = $item  # Keep reference for export
                     }
+                    $email.PSTypeNames.Insert(0, 'OutlookSearch.Email')
                     
                     $emails += $email
                     $count++
@@ -526,14 +544,17 @@ function Search-Outlook {
             Export-OutlookEmail -Emails $emails -Path $ExportPath -Format $(if ($PDF) { "PDF" } else { "Markdown" })
         }
         else {
-            # Standard output
-            $emails | Select-Object Subject, SenderName, To, ReceivedTime, @{N = "Size(KB)"; E = { [math]::Round($_.Size / 1KB, 2) } }, HasAttachments | 
-            Format-Table -AutoSize
-            
-            Write-Host "`nFound $($emails.Count) email(s)" -ForegroundColor Cyan
+            # Print a visually appealing summary to the host (does not pollute the pipeline)
+            if ($emails.Count -gt 0) {
+                Write-Host "`n✓ Found $($emails.Count) matching email(s)" -ForegroundColor Green -BackgroundColor Black
+                Write-Host "=====================================================" -ForegroundColor DarkGray
+            }
+            else {
+                Write-Host "`n✗ No matching emails found." -ForegroundColor Yellow
+            }
         }
         
-        # Return full objects for pipeline
+        # Return pure objects to the pipeline (automatically formatted as a table by TypeData)
         return $emails
         
     }
